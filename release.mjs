@@ -9,9 +9,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const RELEASE_FILES = Object.freeze([
   'README.md', 'car.mjs', 'car.test.mjs', 'cli.mjs', 'cli.test.mjs', 'config.example.json',
-  'deploy/README.md', 'deploy/kubo.service', 'deploy/operator.service',
+  'deploy/PILOT_QUICKSTART.md', 'deploy/README.md', 'deploy/kubo.service', 'deploy/operator.service',
+  'deploy/pilot-fence.mjs', 'deploy/pilot-fence.test.mjs', 'deploy/pilot-manifest.example.json',
+  'deploy/pilot-stop.service.example', 'deploy/pilot-stop.timer.example',
   'io.mjs', 'ipns.mjs', 'ipns.test.mjs', 'journal.mjs', 'journal.test.mjs',
-  'kubo.mjs', 'kubo.test.mjs', 'lease.test.mjs', 'operator.mjs', 'operator.test.mjs',
+  'kubo.mjs', 'kubo.test.mjs', 'lease.test.mjs', 'live-evidence.mjs', 'live-evidence.test.mjs',
+  'operator.mjs', 'operator.test.mjs',
   'package-lock.json', 'package.json', 'release.mjs', 'release.test.mjs',
   'state.mjs', 'state.test.mjs',
 ].sort());
