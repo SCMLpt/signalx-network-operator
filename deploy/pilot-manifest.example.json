@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "approved": false,
+  "termId": "orcestra-bowtie-pilot",
+  "startUtc": null,
+  "endUtc": null,
+  "operatorOwner": null,
+  "stopOwner": null,
+  "hostIdentity": null,
+  "root": "bafybeianebwhw4uzkqnaekl5kyoau7hubxaens7azrftgqtz2mccciejle",
+  "dedicatedRepoConfirmed": false,
+  "operatorConfigSha256": null,
+  "kuboConfigSha256": null,
+  "kuboRepoVersion": null,
+  "peerId": null,
+  "nodeVersion": null
+}
