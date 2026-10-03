@@ -5,13 +5,23 @@ import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, mkdir, open, realpath, unlink } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 export const RELEASE_FILES = Object.freeze([
   'README.md', 'car.mjs', 'car.test.mjs', 'cli.mjs', 'cli.test.mjs', 'config.example.json',
   'deploy/PILOT_QUICKSTART.md', 'deploy/README.md', 'deploy/kubo.service', 'deploy/operator.service',
   'deploy/pilot-fence.mjs', 'deploy/pilot-fence.test.mjs', 'deploy/pilot-manifest.example.json',
   'deploy/pilot-stop.service.example', 'deploy/pilot-stop.timer.example',
+  'http-provider/README.md', 'http-provider/activate.mjs', 'http-provider/dataset-build.mjs',
+  'http-provider/dataset-build.test.mjs',
+  'http-provider/deployment-data.json', 'http-provider/discovery-check.mjs', 'http-provider/file-verify.mjs',
+  'http-provider/handler.mjs', 'http-provider/handler.test.mjs',
+  'http-provider/ipni-build.mjs', 'http-provider/ipni-build.test.mjs',
+  'http-provider/ipni-reference/go.mod', 'http-provider/ipni-reference/go.sum',
+  'http-provider/ipni-reference/main.go', 'http-provider/ipni-reference/main_test.go',
+  'http-provider/maintenance.mjs', 'http-provider/maintenance.test.mjs',
+  'http-provider/remote-verify.mjs', 'http-provider/unixfs.mjs', 'http-provider/unixfs.test.mjs',
+  'http-provider/worker.mjs',
   'io.mjs', 'ipns.mjs', 'ipns.test.mjs', 'journal.mjs', 'journal.test.mjs',
   'kubo.mjs', 'kubo.test.mjs', 'lease.test.mjs', 'live-evidence.mjs', 'live-evidence.test.mjs',
   'operator.mjs', 'operator.test.mjs',
@@ -346,6 +356,7 @@ async function main() {
     expectedHashMatched: expected !== undefined, authenticityVerified: false }, null, 2));
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(await realpath(resolve(process.argv[1]))).href) {
+if (process.argv[1] && await realpath(fileURLToPath(import.meta.url)) ===
+    await realpath(resolve(process.argv[1]))) {
   main().catch(error => { console.error(error.message); process.exitCode = 1; });
 }

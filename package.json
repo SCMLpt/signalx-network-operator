@@ -1,13 +1,13 @@
 {
   "name": "signalx-network-operator",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test car.test.mjs cli.test.mjs ipns.test.mjs journal.test.mjs kubo.test.mjs lease.test.mjs live-evidence.test.mjs operator.test.mjs release.test.mjs state.test.mjs deploy/pilot-fence.test.mjs"
+    "test": "node --test --test-concurrency=1 car.test.mjs cli.test.mjs ipns.test.mjs journal.test.mjs kubo.test.mjs lease.test.mjs live-evidence.test.mjs operator.test.mjs release.test.mjs state.test.mjs deploy/pilot-fence.test.mjs http-provider/dataset-build.test.mjs http-provider/handler.test.mjs http-provider/maintenance.test.mjs http-provider/ipni-build.test.mjs http-provider/unixfs.test.mjs"
   },
   "dependencies": {
     "@ipld/car": "5.4.7",
