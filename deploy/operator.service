@@ -1,0 +1,60 @@
+# Reference deployment only. Nothing in this repository enables or starts it.
+# Prerequisites, reviewed pin policy and required log/disk/egress caps: README.md.
+[Unit]
+Description=SignalX verified IPNS publication operator
+Wants=network-online.target kubo.service
+After=network-online.target kubo.service
+StartLimitIntervalSec=15min
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=signalx-network
+Group=signalx-network
+WorkingDirectory=/opt/signalx/network-operator
+StateDirectory=signalx-operator
+StateDirectoryMode=0700
+UMask=0077
+Environment=NODE_ENV=production
+ExecStartPre=/usr/bin/test -f /etc/signalx-network/operator.json
+ExecStartPre=/usr/bin/test ! -L /etc/signalx-network/operator.json
+ExecStart=/opt/node-v22/bin/node --max-old-space-size=256 /opt/signalx/network-operator/cli.mjs run /etc/signalx-network/operator.json
+Restart=on-failure
+RestartSec=30s
+# CLI handles SIGTERM between cycles; its maximum configured run timeout is 300s.
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=330s
+
+# Starting examples, NOT measured capacity or availability guarantees.
+MemoryHigh=256M
+MemoryMax=512M
+MemorySwapMax=0
+CPUQuota=50%
+TasksMax=64
+LimitNOFILE=1024
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=signalx-operator
+# Install the namespace's size/rotation policy from README.md before activation.
+LogNamespace=signalx-network
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=100
+
+[Install]
+WantedBy=multi-user.target

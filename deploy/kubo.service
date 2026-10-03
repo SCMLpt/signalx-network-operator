@@ -1,0 +1,61 @@
+# Uses an EXISTING Kubo 0.43.1 repository. Does not initialize or migrate it.
+# Public swarm addresses, native bootstrap and providing policy: README.md.
+[Unit]
+Description=Kubo public IPFS peer for SignalX operator
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=15min
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=signalx-network
+Group=signalx-network
+WorkingDirectory=/var/lib/signalx-kubo
+StateDirectory=signalx-kubo
+StateDirectoryMode=0700
+UMask=0077
+Environment=IPFS_PATH=/var/lib/signalx-kubo
+ExecStartPre=/usr/bin/test -f /var/lib/signalx-kubo/config
+ExecStartPre=/usr/bin/test -f /var/lib/signalx-kubo/version
+# Fail closed if the existing configuration would expose the administrative API.
+# Read only; no configuration/key values are printed or changed.
+ExecStartPre=/opt/node-v22/bin/node -e 'try { const fs=require("node:fs"); const c=JSON.parse(fs.readFileSync("/var/lib/signalx-kubo/config","utf8")); const a=c.Addresses?.API; const v=Array.isArray(a)?a:[a]; if(v.length!==1 || v[0]!=="/ip4/127.0.0.1/tcp/5001") { console.error("Kubo API must bind only 127.0.0.1:5001"); process.exit(1); } } catch { console.error("Cannot validate Kubo API configuration"); process.exit(1); }'
+ExecStart=/opt/kubo-v0.43.1/ipfs daemon --init=false --migrate=false --enable-gc
+Restart=on-failure
+RestartSec=30s
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=90s
+
+# Starting examples, NOT measured capacity or availability guarantees.
+MemoryHigh=4G
+MemoryMax=6G
+MemorySwapMax=0
+CPUQuota=200%
+TasksMax=512
+LimitNOFILE=4096
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=signalx-kubo
+LogNamespace=signalx-network
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=100
+
+[Install]
+WantedBy=multi-user.target
