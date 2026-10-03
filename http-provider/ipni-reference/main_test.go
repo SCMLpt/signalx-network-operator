@@ -28,6 +28,8 @@ import (
 
 const rootCID = "bafybeianebwhw4uzkqnaekl5kyoau7hubxaens7azrftgqtz2mccciejle"
 
+func timestamp(value string) *string { return &value }
+
 func fixture(t *testing.T) (*bundle, crypto.PrivKey) {
 	t.Helper()
 	// Fresh ephemeral identity exists in memory only. No private key is a fixture,
@@ -40,7 +42,7 @@ func fixture(t *testing.T) (*bundle, crypto.PrivKey) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := request{RootCID: rootCID, ProviderID: p.String(), ActivatedAt: "2026-10-03T09:50:00.370Z", ExpiresAt: "2026-10-10T09:50:00.370Z", BlockCIDs: []string{
+	r := request{RootCID: rootCID, ProviderID: p.String(), ActivatedAt: "2026-10-03T09:50:00.370Z", ExpiresAt: timestamp("2026-10-10T09:50:00.370Z"), BlockCIDs: []string{
 		rootCID,
 		"bafkreiauikfcizmttxtlpn6yafmwbsnldv6nncnd766bvlpfash5sq3esq",
 		"bafkreiczuc5w3fp5kxfls44jxrpwsx6jzzqrgha3pldjnzf5wpyxjbr7yi",
@@ -75,7 +77,7 @@ func TestReferencePublicBundle(t *testing.T) {
 	if b.ActiveHead.CID == b.RemovalHead.CID {
 		t.Fatal("removal must be a separate signed advertisement")
 	}
-	for _, h := range []object{b.ActiveHead, b.RemovalHead} {
+	for _, h := range []object{b.ActiveHead, *b.RemovalHead} {
 		sh, err := head.Decode(bytes.NewReader(h.Body))
 		if err != nil {
 			t.Fatal(err)
@@ -114,7 +116,7 @@ func TestTamperedPublicBundlesRejected(t *testing.T) {
 		"removal link":    func(b *bundle) { b.RemovalHead.CID = b.ActiveHead.CID },
 		"announce":        func(b *bundle) { b.AddAnnouncement.Body[10] ^= 1 },
 		"missing entries": func(b *bundle) { b.Objects = b.Objects[1:] },
-		"long term":       func(b *bundle) { b.Request.ExpiresAt = "2026-10-11T09:50:00.370Z" },
+		"long term":       func(b *bundle) { b.Request.ExpiresAt = timestamp("2026-10-11T09:50:00.370Z") },
 		"hostname":        func(b *bundle) { b.Request.ProviderHost = "another-ipfs-provider.kamuitranslator.workers.dev" },
 		"entry CID": func(b *bundle) {
 			b.Request.BlockCIDs[1], b.Request.BlockCIDs[2] = b.Request.BlockCIDs[2], b.Request.BlockCIDs[1]
@@ -155,7 +157,7 @@ func TestPortableRootHostnameAndEntryBounds(t *testing.T) {
 			if err := verifyBundle(clone(t, actual)); err != nil {
 				t.Fatal(err)
 			}
-			for _, h := range []object{actual.ActiveHead, actual.RemovalHead} {
+			for _, h := range []object{actual.ActiveHead, *actual.RemovalHead} {
 				var adObject object
 				for _, o := range actual.Objects {
 					if o.CID == h.CID {
@@ -223,7 +225,7 @@ func TestRequestAndKeyBoundaries(t *testing.T) {
 	for _, duration := range []time.Duration{0, -time.Second, 7*24*time.Hour + time.Millisecond} {
 		bad := r
 		start, _ := time.Parse(time.RFC3339Nano, r.ActivatedAt)
-		bad.ExpiresAt = start.Add(duration).Format(time.RFC3339Nano)
+		bad.ExpiresAt = timestamp(start.Add(duration).Format(time.RFC3339Nano))
 		if _, err := validateRequest(bad); err == nil {
 			t.Fatal("invalid term accepted")
 		}
@@ -239,6 +241,96 @@ func TestRequestAndKeyBoundaries(t *testing.T) {
 	r.BlockCIDs[1] = r.BlockCIDs[0]
 	if _, err := validateRequest(r); err == nil {
 		t.Fatal("duplicate multihash accepted")
+	}
+}
+
+func TestContinuousMigrationRetiresOnlyThePredecessorContext(t *testing.T) {
+	prior, key := fixture(t)
+	r := prior.Request
+	r.ProviderHost = historicalProviderHost
+	r.ServingMode = "continuous"
+	r.ExpiresAt = nil
+	current, err := buildBundle(r, key, prior)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Version != 2 || current.RemovalHead != nil || current.RemovalAnnouncement != nil || current.Predecessor == nil || current.Predecessor.RetirementCID != prior.RemovalHead.CID || bytes.Equal(current.ContextID, prior.ContextID) {
+		t.Fatal("continuous migration policy or retirement mismatch")
+	}
+	if err := verifyBundle(clone(t, current)); err != nil {
+		t.Fatal(err)
+	}
+	objects := map[string]object{}
+	for _, o := range current.Objects {
+		objects[o.CID] = o
+	}
+	for _, old := range prior.Objects {
+		if !bytes.Equal(objects[old.CID].Body, old.Body) {
+			t.Fatal("historical exact sync object lost")
+		}
+	}
+	bridge, err := readAdvertisement(objects[prior.RemovalHead.CID], r)
+	if err != nil || !bridge.IsRm || !bytes.Equal(bridge.ContextID, prior.ContextID) || bytes.Equal(bridge.ContextID, current.ContextID) || bridge.PreviousID.String() != prior.ActiveHead.CID {
+		t.Fatal("delayed old removal can affect the new context, or predecessor link is wrong")
+	}
+	r.ActivatedAt = "2026-10-03T09:51:00.370Z"
+	later, err := buildBundle(r, key, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyBundle(clone(t, later)); err != nil {
+		t.Fatal(err)
+	}
+	if later.Predecessor.ActiveHead.CID != current.ActiveHead.CID || bytes.Equal(later.ContextID, current.ContextID) {
+		t.Fatal("later update did not extend the same identity chain with a fresh context")
+	}
+	if _, err := buildBundle(r, key, later); err == nil {
+		t.Fatal("reusing the same continuous context accepted")
+	}
+	for name, mutate := range map[string]func(*bundle){
+		"expiry":              func(b *bundle) { b.Request.ExpiresAt = timestamp("2026-10-10T09:50:00.370Z") },
+		"mode":                func(b *bundle) { b.Request.ServingMode = "finite" },
+		"scheduled removal":   func(b *bundle) { b.RemovalHead = prior.RemovalHead },
+		"predecessor context": func(b *bundle) { b.Predecessor.ContextID = b.ContextID },
+		"retirement CID":      func(b *bundle) { b.Predecessor.RetirementCID = prior.ActiveHead.CID },
+		"predecessor head":    func(b *bundle) { b.Predecessor.ActiveHead = b.ActiveHead },
+		"predecessor host": func(b *bundle) {
+			b.Predecessor.Request.ProviderHost = "another-ipfs-provider.kamuitranslator.workers.dev"
+		},
+		"history missing": func(b *bundle) { b.Objects = b.Objects[1:] },
+		"history changed": func(b *bundle) { b.Objects[0].Body[0] ^= 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := clone(t, current)
+			mutate(bad)
+			if verifyBundle(bad) == nil {
+				t.Fatal("tampered continuous migration accepted")
+			}
+		})
+	}
+}
+
+func TestContinuousGenesisAndExplicitFinitePolicy(t *testing.T) {
+	prior, key := fixture(t)
+	r := prior.Request
+	r.ServingMode = "finite"
+	finite, err := buildBundle(r, key)
+	if err != nil || !bytes.Equal(finite.ContextID, prior.ContextID) {
+		t.Fatal("explicit finite policy changed historical context")
+	}
+	r.ServingMode = "continuous"
+	r.ProviderHost = historicalProviderHost
+	r.ExpiresAt = nil
+	genesis, err := buildBundle(r, key)
+	if err != nil || verifyBundle(genesis) != nil || genesis.Predecessor != nil || len(genesis.Objects) != 2 {
+		t.Fatal("continuous genesis did not verify")
+	}
+	for _, mode := range []string{"", "finite", "unknown"} {
+		bad := r
+		bad.ServingMode = mode
+		if _, err := validateRequest(bad); err == nil {
+			t.Fatal("implicit null or unknown serving mode accepted")
+		}
 	}
 }
 
