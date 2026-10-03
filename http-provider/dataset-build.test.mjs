@@ -74,6 +74,26 @@ test('legitimate empty original raw files remain represented', async () => {
   });
 });
 
+test('continuous publication has explicit null expiry and unchanged bounded original content', async () => {
+  const f = await fixture();
+  await withFile(f.car, async path => {
+    const built = await buildDataset(path, { ...f.options, servingMode: 'continuous', termEndUtc: null });
+    assert.equal(built.servingMode, 'continuous');
+    assert.equal(built.termEndUtc, null);
+    assert.equal(built.startedAtUtc, term.startedAtUtc);
+    assert.equal(built.carBase64, f.car.toString('base64'));
+    assert.equal(built.blocks[f.leaf.cid.toString()], Buffer.from(f.leaf.bytes).toString('base64'));
+    assert.equal(built.verification.upstreamFetchOnRead, false);
+    for (const change of [
+      { servingMode: 'continuous' }, { servingMode: 'continuous', termEndUtc: undefined },
+      { servingMode: 'continuous', termEndUtc: null, startedAtUtc: '2030-01-01' },
+      { servingMode: 'continuous', termEndUtc: null, carSha256: '0'.repeat(64) },
+      { servingMode: 'finite', termEndUtc: null }, { servingMode: 'forever' },
+      { termEndUtc: null },
+    ]) await assert.rejects(buildDataset(path, { ...f.options, ...change }));
+  });
+});
+
 test('duplicate and unreachable sections cannot enter a public deployment', async () => {
   for (const mode of [{ duplicate: true }, { extra: true }]) {
     const f = await fixture(mode);

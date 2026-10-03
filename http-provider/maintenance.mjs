@@ -34,6 +34,23 @@ function deadlineFrom(value) {
 export function createExpiryMaintenance(data, { fetchFn = globalThis.fetch, now = Date.now, timeoutMs = 10_000 } = {}) {
   if (typeof fetchFn !== 'function' || typeof now !== 'function' ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) throw new TypeError('Invalid maintenance options');
+  const servingMode = data?.servingMode === undefined ? 'finite' : data.servingMode;
+  if (!['finite', 'continuous'].includes(servingMode)) throw new TypeError('Invalid servingMode');
+  if (servingMode === 'continuous') {
+    if (data.termEndUtc !== null || !Number.isSafeInteger(deadlineFrom(data.startedAtUtc))) {
+      throw new TypeError('Continuous serving requires null expiry and valid UTC start');
+    }
+    const ipni = data.ipni;
+    const removalObjects = ipni?.removalObjects;
+    if (ipni?.removalHeadBase64 != null || ipni?.removalAnnouncement != null ||
+        removalObjects != null && (typeof removalObjects !== 'object' || Array.isArray(removalObjects) || Object.keys(removalObjects).length)) {
+      throw new TypeError('Continuous serving cannot configure expiry removal');
+    }
+    return { async run() {
+      return { operation: 'ipni_removal_announcement', state: 'skipped', reason: 'continuous_serving_policy' };
+    } };
+  }
+  if (data?.servingMode === 'finite' && data.termEndUtc === null) throw new TypeError('Finite serving requires an expiry');
   const deadline = deadlineFrom(data?.termEndUtc);
   const announcement = publicAnnouncement(data?.ipni?.removalAnnouncement);
   return {

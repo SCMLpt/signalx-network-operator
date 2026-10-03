@@ -18,6 +18,10 @@ const carPath = `/ipfs/${root}?format=car&dag-scope=all`;
 const b64 = value => Buffer.from(value).toString('base64');
 const request = (path, options) => new Request(base + path, options);
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+const continuousData = () => ({ ...deploymentData, servingMode: 'continuous', termEndUtc: null,
+  ipni: deploymentData.ipni ? { ...deploymentData.ipni,
+    objects: { ...deploymentData.ipni.objects, ...deploymentData.ipni.removalObjects },
+    removalHeadBase64: null, removalAnnouncement: null, removalObjects: {} } : null });
 function base32Decode(text) {
   const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
   let bits = 0; let acc = 0; const output = [];
@@ -338,4 +342,72 @@ test('a valid SHA-256 zero-byte raw publication supports GET, HEAD and complete 
   for await (const block of car.blocks()) entries.push(block);
   assert.equal(entries.length, 1); assert.equal(entries[0].cid.toString(), cid); assert.equal(entries[0].bytes.length, 0);
   assert.equal(digest(entries[0].bytes), Buffer.from(CID.parse(cid).multihash.digest).toString('hex'));
+});
+
+test('continuous original content and active IPNI history survive the historical cutoff and future dates', async t => {
+  const mocked = clock(t);
+  const data = continuousData(); const provider = createProvider(data);
+  const file = dagPb.decode(Buffer.from(data.blocks[root], 'base64')).Links[0];
+  const paths = [raw(root), carPath, `/ipfs/${root}/${file.Name}`, `/ipfs/${root}?format=json`,
+    `/ipfs/${root}/${file.Name}?format=car&dag-scope=block`, `/ipfs/${root}/${file.Name}?format=car&dag-scope=entity`];
+  for (const now of [deadline, deadline + 1, deadline + 365 * 86_400_000]) {
+    mocked.mock.mockImplementation(() => now);
+    for (const path of paths) {
+      const get = provider.fetch(request(path)); const head = provider.fetch(request(path, { method: 'HEAD' }));
+      assert.equal(get.status, 200, path); assert.equal(head.status, 200, path);
+      assert.equal(head.headers.get('content-length'), get.headers.get('content-length'));
+      assert.equal((await head.arrayBuffer()).byteLength, 0);
+      assert.equal(get.headers.get('cache-control'), 'public, max-age=3600, s-maxage=3600, immutable, must-revalidate');
+      assert.equal(get.headers.get('access-control-allow-origin'), '*');
+      assert.equal(provider.fetch(request(path, { headers: { 'if-none-match': get.headers.get('etag') } })).status, 304);
+    }
+    assert.deepEqual(Buffer.from(await provider.fetch(request(raw(root))).arrayBuffer()), Buffer.from(data.blocks[root], 'base64'));
+    assert.deepEqual(Buffer.from(await provider.fetch(request(carPath)).arrayBuffer()), Buffer.from(data.carBase64, 'base64'));
+    const health = await provider.fetch(request('/health')).json();
+    assert.equal(health.servingMode, 'continuous'); assert.equal(health.termEndUtc, null);
+    assert.equal(health.startedAtUtc, data.startedAtUtc); assert.equal(health.contentAvailable, true);
+    assert.equal(health.nativeBitswap, false); assert.equal(health.ipni.head, 'active');
+    assert.deepEqual(Buffer.from(await provider.fetch(request('/ipni/v1/ad/head')).arrayBuffer()), Buffer.from(data.ipni.headBase64, 'base64'));
+    for (const [cid, object] of Object.entries(data.ipni.objects)) {
+      const response = provider.fetch(request(`/ipni/v1/ad/${cid}`));
+      assert.equal(response.status, 200);
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()), Buffer.from(object.bodyBase64, 'base64'));
+    }
+  }
+});
+
+test('continuous start and valid clock precede content conditionals and never select a removal head', async t => {
+  const data = continuousData(); const start = Date.parse(data.startedAtUtc);
+  const mocked = clock(t, start - 1); const provider = createProvider(data);
+  for (const now of [start - 1, NaN, Infinity, -Infinity, 1.5, Number.MAX_SAFE_INTEGER]) {
+    mocked.mock.mockImplementation(() => now);
+    for (const path of [raw(root), carPath, `/ipfs/${root}?format=car&dag-scope=block`]) {
+      const response = provider.fetch(request(path, { headers: { 'if-none-match': '*' } }));
+      assert.equal(response.status, 410); assert.equal(response.headers.get('cache-control'), 'no-store');
+    }
+    assert.equal(provider.fetch(request('/ipni/v1/ad/head')).status, 404);
+    const health = await provider.fetch(request('/health')).json();
+    assert.equal(health.contentAvailable, false); assert.equal(health.ipni.head, 'absent');
+  }
+  mocked.mock.mockImplementation(() => start);
+  assert.equal(provider.fetch(request(raw(root))).status, 200);
+  assert.equal(provider.fetch(request('/ipni/v1/ad/head')).status, 200);
+});
+
+test('continuous mixed expiry/removal policies are rejected and historical finite policy remains supported', async t => {
+  clock(t);
+  const data = continuousData();
+  for (const patch of [
+    { servingMode: 'unknown' }, { servingMode: null }, { servingMode: 'finite' },
+    { termEndUtc: deploymentData.termEndUtc }, { termEndUtc: undefined },
+    { startedAtUtc: undefined }, { startedAtUtc: null }, { startedAtUtc: '2026-02-30T00:00:00Z' },
+    { ipni: { ...data.ipni, removalHeadBase64: deploymentData.ipni.removalHeadBase64 } },
+    { ipni: { ...data.ipni, removalObjects: deploymentData.ipni.removalObjects } },
+    { ipni: { ...data.ipni, removalAnnouncement: deploymentData.ipni.removalAnnouncement } },
+  ]) assert.throws(() => createProvider({ ...data, ...patch }));
+  const legacy = { ...deploymentData }; delete legacy.startedAtUtc;
+  const health = await createProvider(legacy).fetch(request('/health')).json();
+  assert.equal(health.servingMode, 'finite'); assert.equal(health.startedAtUtc, null);
+  assert.equal(health.termEndUtc, deploymentData.termEndUtc);
+  assert.equal(createProvider({ ...deploymentData, servingMode: 'finite' }).fetch(request(raw(root))).status, 200);
 });

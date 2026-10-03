@@ -1,6 +1,10 @@
-# Finite IPFS HTTP providers
+# IPFS HTTP providers
 
 Two deployments of this adapter are live HTTPS content providers advertised through the existing IPNI network. On October 3, 2026, the project deployed the Meteor provider to Cloudflare Workers Free at [signalx-ipfs-provider.kamuitranslator.workers.dev](https://signalx-ipfs-provider.kamuitranslator.workers.dev/health). It holds the five original content-addressed blocks and complete 166,374-byte CAR for one permitted third-party publication. A separate GATE provider is documented below. Content requests read embedded bytes; they perform no runtime upstream fetch.
+
+Version 0.1.3 adds continuous serving with `servingMode:"continuous"`, a canonical UTC `startedAtUtc` and `termEndUtc:null`. On October 3, 2026, both existing production services changed to this policy while retaining their provider IDs, HTTPS hosts, original CARs, block bytes and attribution. Public `/health`, exact new signed heads, all 30 original blocks and both complete CARs were checked against the deployed versions. Both named production services have no installed Cron triggers. Existing finite data and historical bundles remain supported.
+
+The new signed announcements received HTTP 204 at `2026-10-03T13:26:02.580Z` for Meteor and `2026-10-03T13:26:05.228Z` for GATE. Subsequent IPNI multihash readback found the exact new context, provider address and HTTP metadata for all five Meteor and 25 GATE blocks, with their old contexts absent. Sixty ordinary discovery requests found the exact provider identity, address and protocol for every CID on both `cid.contact` and `delegated-ipfs.dev`. These are project-controlled observations of admission, context retirement and public discoverability. GATE's provider-summary head matched its new advertisement; Meteor's final summary response was a cached predecessor head, so convergence of that separate metadata endpoint remains unverified. No further announcement or polling loop was used.
 
 The publication is **FS Meteor log and coordination log between RV METEOR and other platforms during BOWTIE**, by Hans Segura and Allison A. Wing, from ORCESTRA / BOWTIE. The [original publication](https://ipfs.orcestra-campaign.org/ipfs/bafybeianebwhw4uzkqnaekl5kyoau7hubxaens7azrftgqtz2mccciejle/) is mirrored without changes under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The publisher's public pinlist invites mirroring.
 
@@ -11,7 +15,10 @@ The publication is **FS Meteor log and coordination log between RV METEOR and ot
 | Provider address | `/dns4/signalx-ipfs-provider.kamuitranslator.workers.dev/tcp/443/tls/http` |
 | Routing protocol | `transport-ipfs-gateway-http` |
 | Original CAR SHA-256 | `d79dd33f1717beed7d7152f61170c06f318529edf193277c997a576663007078` |
-| Serving term, UTC | `2026-10-03T09:50:00.370Z` through `2026-10-10T09:50:00.370Z` |
+| Original finite term, UTC | `2026-10-03T09:50:00.370Z` through `2026-10-10T09:50:00.370Z` |
+| Continuous policy start, UTC | `2026-10-03T12:46:24.000Z`; no scheduled end |
+| Continuous deployed version | `7bdf1b68-3560-4216-8bcd-d80075c6fdb3` |
+| Continuous advertisement CID | `bafyreihdzrt7yqo4lqzm22lmrcgvhok73hqw6hlki63g7a4ibjagoueldu` |
 
 The deployed provider passed a project-controlled HTTP/2 retrieval of all five raw blocks and the complete CAR, with CID hashes and reachable graph verified. Its signed IPNI announcement received HTTP 204 from `cid.contact/ingest/announce` at `2026-10-03T10:12:07.052Z`. Subsequent bounded checks at `10:15:07–10:15:13Z` returned its exact provider ID, address and HTTP protocol for all five CIDs from both `cid.contact` and the default delegated router `delegated-ipfs.dev`. A further ten-request check at `11:14:32–11:14:35Z` verified the directory listing and GET/HEAD responses for all four original filenames against the independently decoded publisher CAR.
 
@@ -29,7 +36,10 @@ A second deployment at [signalx-ipfs-provider-gate.kamuitranslator.workers.dev](
 | Provider ID | `12D3KooWHoujf78JNhxCy9HShhhAKhfwXLSePnN3F1CNfvnTH8ys` |
 | Original CAR | 219,951 bytes, 25 complete blocks |
 | Original CAR SHA-256 | `6c4e0cb33cfdef0a8c18c023401f09131fddfe931cf2b93a8a6b059bf2780e72` |
-| Serving term, UTC | `2026-10-03T11:09:35.016Z` through `2026-10-10T09:50:00.370Z` |
+| Original finite term, UTC | `2026-10-03T11:09:35.016Z` through `2026-10-10T09:50:00.370Z` |
+| Continuous policy start, UTC | `2026-10-03T12:46:24.000Z`; no scheduled end |
+| Continuous deployed version | `42609488-661b-4ba7-9883-acac7dde59be` |
+| Continuous advertisement CID | `bafyreibrvj5v7ry6fznw7ctlfe474c6c6w5i6cmrc6i7vjoekmwywfykle` |
 
 Its controlled HTTP/2 check verified all 25 raw blocks and the complete CAR in 31 requests, receiving 439,664 response bytes. The signed IPNI announcement received HTTP 204 at `2026-10-03T11:42:11.839Z`; 50 subsequent requests verified the exact provider identity, hostname and HTTP protocol for every CID on both public routers.
 
@@ -68,20 +78,29 @@ The resolver reads only held raw and DAG-PB UnixFS blocks, bounds paths to 16 co
 
 `ipni-reference/` uses pinned `go-libipni` 0.9.0 and `go-libp2p` 0.50.0 to build signed advertisements, signed heads, entry chunks and HTTP transport metadata. Its public verification checks signatures, entry content, address, advertisement linkage and removal behavior with the official SDK. Run `go test -p=1 -mod=readonly ./...` from that directory with Go 1.26 or later and the pinned dependencies available. `ipni-build.mjs --verify PUBLIC_BUNDLE.json` also checks the HTTP handler mapping. The builder uses `go` on PATH and normal Go cache defaults; `--go`, `--go-path` and `--go-cache` provide explicit executable and cache paths. Public verification takes no private key.
 
-## Expiry
+## Continuous and finite serving policies
 
-At the exact term end, the handler returns HTTP 410 for content and switches its signed IPNI head to the prepared removal advertisement. Cache lifetime is capped by the remaining serving term. Both deployed Workers have the Cron expression `51 9 10 10 *`, admitting a removal announcement on October 10 at 09:51 UTC. The maintenance handler permits execution only in the five minutes after expiry, performs one bounded PUT per admitted callback, and carries no private key.
+Continuous mode serves the approved embedded graph from its canonical UTC start, without a scheduled end. Its current `removalHead` and `removalAnnouncement` are null, and its deployed `ipni` mapping has no expiry removal configuration. `/health` reports the root, provider identity, `servingMode`, `startedAtUtc`, `termEndUtc`, content availability and whether an active signed IPNI head is configured. Content caching is bounded to one hour. A fetch-only Worker and an explicit empty `[triggers]` / `crons = []` configuration remove the expiry callback; operators must also inspect the service's installed triggers after deployment.
 
-HTTP expiry works independently of the scheduled announcement. Cron delivery, a removal acknowledgement and disappearance from routing indexes are separate observations; deindexing has not yet been verified. The annual Cron expression is fenced by the fixed 2026 deadline, so callbacks outside that window do no work. Expiry stops this provider's content service; it does not delete embedded bytes, the Worker deployment, or copies retained by others.
+Continuous means that this adapter has no arbitrary calendar cutoff. It does not guarantee permanent storage, uninterrupted availability or unlimited capacity. The deployments use the existing Workers Free plan with no storage bindings or paid resources. Cloudflare's [current Workers limits](https://developers.cloudflare.com/workers/platform/limits/) include 100,000 requests per day shared across the account, resetting at midnight UTC, 10 ms CPU per HTTP request and 128 MB isolate memory. Quota exhaustion can produce Error 1027. Service continuation remains subject to the account, platform limits and an accountable operator.
+
+Finite mode remains backward compatible: omitted `servingMode` means finite, and an explicit `servingMode:"finite"` requires a canonical end later than the start, with a builder/signing term of at most seven days. The continuous option does not alter already published finite bundles or their signed history.
+
+At a finite term's exact end, the handler returns HTTP 410 for content and switches its signed IPNI head to the prepared removal advertisement. Cache lifetime is capped by the remaining serving term. The original finite deployments used the Cron expression `51 9 10 10 *`, admitting a removal announcement on October 10 at 09:51 UTC. The finite maintenance handler permits execution only in the five minutes after expiry, performs one bounded PUT per admitted callback, and carries no private key. Continuous maintenance is a no-op and rejects configured expiry removal fields.
+
+For a finite deployment, HTTP expiry works independently of its scheduled announcement. Future finite expiry callback execution, acknowledgement and deindexing are separate observations and were not exercised by this continuous migration. The historical annual Cron expression was fenced by its fixed 2026 deadline, so callbacks outside that window did no work; those triggers have now been removed from the two continuous services. A finite expiry stops that provider's content service; it does not delete embedded bytes, the Worker deployment, or copies retained by others.
 
 ## Public source boundary
 
-The v0.1.2 source allowlist includes 21 adapter files; the historical v0.1.1 archive contains none of them. `deployment-data.json` contains public original content, attribution, provider identity and signed public IPNI objects. The source archive excludes `tmp/`, `.wrangler/`, private keys, credentials, account configuration, the local deployment `wrangler.toml`, installed dependencies and raw capture receipts.
+The v0.1.3 source allowlist includes 21 adapter files; the historical v0.1.1 archive contains none of them. `deployment-data.json` contains the actual continuous Meteor public data: original content, attribution, provider identity and signed public IPNI objects. The source archive excludes `tmp/`, `.wrangler/`, private keys, credentials, account configuration, the local deployment `wrangler.toml`, installed dependencies and raw capture receipts. The v0.1.2 tag and archive retain their earlier finite implementation unchanged. This guide documents source version 0.1.3; obtain publication status and the archive digest from the [versioned GitHub releases](https://github.com/SCMLpt/signalx-network-operator/releases).
 
-For a separate provider, supply a qualified publication JSON with `root`, `carSha256`, `providerHost` and `attribution` containing `title`, `creators`, a public HTTPS `source`, `license` and `changes`. Optional `carBytes`, `expectedBlocks`, `payloadBytes` and `graphDigest` bind prior qualification measurements. The builder verifies a complete original CAR of at most 1 MiB and 64 SHA-256 blocks, excludes duplicates and unreachable blocks, and requires a canonical UTC term lasting at most seven days.
+The release may also provide `meteor-ipni-bundle.json` and `gate-ipni-bundle.json` as public signed verification assets. They contain no signing key. After authenticating the source archive, verify each asset with `node http-provider/ipni-build.mjs --verify ASSET.json` using the pinned official Go SDK dependencies. Public verification checks the complete signed predecessor chain and HTTP object mapping without account access or a private key.
+
+For a separate provider, supply a qualified publication JSON with `root`, `carSha256`, `providerHost` and `attribution` containing `title`, `creators`, a public HTTPS `source`, `license` and `changes`. Optional `carBytes`, `expectedBlocks`, `payloadBytes` and `graphDigest` bind prior qualification measurements. The builder verifies a complete original CAR of at most 1 MiB and 64 SHA-256 blocks, excludes duplicates and unreachable blocks, and requires a canonical UTC start. Use `continuous` in the end argument to produce explicit continuous/null-expiry data; a finite end must be canonical UTC and within seven days.
 
 ```sh
-node http-provider/dataset-build.mjs ORIGINAL_CAR DATA.json START_UTC END_UTC QUALIFIED_PUBLICATION.json
+node http-provider/dataset-build.mjs ORIGINAL_CAR DATA.json START_UTC continuous QUALIFIED_PUBLICATION.json
+# Alternatively, replace continuous with a finite END_UTC.
 ```
 
 Record the PeerID corresponding to a separately supplied libp2p Ed25519 private key in the generated data's `providerId`. There is no bundled key-generation command. Sign and verify the public objects:
@@ -91,19 +110,50 @@ node http-provider/ipni-build.mjs --data DATA.json --key PRIVATE.pb --output PUB
 node http-provider/ipni-build.mjs --verify PUBLIC_BUNDLE.json
 ```
 
-Prepare the Worker's `deployment-data.json` with the bundle's `ipni` mapping and its `removalAnnouncement` under `ipni.removalAnnouncement`. The signing key remains separate. New providers require an explicit canonical public DNS `providerHost`; the signed transport uses HTTPS port 443. Remote delivery and routing checks accept the operator's dataset. The filename verifier remains bound to the exact Meteor publisher CAR and deployment.
+For an existing finite provider, retain its previous public bundle and pass it when signing the continuous replacement:
+
+```sh
+node http-provider/ipni-build.mjs --data DATA.json --key PRIVATE.pb --previous-bundle PREVIOUS_PUBLIC_BUNDLE.json --output PUBLIC_BUNDLE.json
+node http-provider/ipni-build.mjs --verify PUBLIC_BUNDLE.json
+```
+
+The version-2 continuous bundle records the predecessor and preserves the same provider, root, effective hostname and exact content entries. Its signed chain is the previous finite addition, that context's signed removal bridge, then a new continuous addition with a distinct context. All prior public objects remain available byte-for-byte in the active object map, within the 64-object bundle bound. The retained removal retires the old context; it is not a current expiry removal head or a future scheduled cutoff. A fresh continuous provider has no predecessor. Historical finite version-1 bundles remain publicly verifiable without a private key.
+
+Prepare the Worker's `deployment-data.json` with the bundle's `ipni` mapping. For a finite deployment, also place its `removalAnnouncement` under `ipni.removalAnnouncement`. Continuous data must not configure current expiry removal objects, head or announcement. The signing key remains separate. New providers require an explicit canonical public DNS `providerHost`; the signed transport uses HTTPS port 443. Remote delivery and routing checks accept the operator's dataset. The filename verifier remains bound to the exact Meteor publisher CAR and deployment.
 
 A minimal account-free Worker configuration can be saved beside `worker.mjs`:
 
 ```toml
-name = "my-finite-ipfs-provider"
+name = "my-ipfs-provider"
 main = "worker.mjs"
 compatibility_date = "2026-10-03"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
+
+[triggers]
+crons = []
 ```
 
-The operator supplies their own account access and a Cron matching the reviewed term. After deploying the prepared Worker, use its public data and bundle:
+The packaged `worker.mjs` exports only the provider's `fetch` handler for continuous operation. Inspect that the installed service has no Cron triggers after deployment; an empty local configuration alone does not prove removal. The operator supplies their own account access.
+
+For a finite deployment, use finite data with its prepared removal configuration and a separate entry point that enables the retained maintenance handler:
+
+```js
+import deploymentData from './deployment-data.json' with { type: 'json' };
+import { createProvider } from './handler.mjs';
+import { createExpiryMaintenance } from './maintenance.mjs';
+
+const provider = createProvider(deploymentData);
+const maintenance = createExpiryMaintenance(deploymentData);
+export default {
+  fetch: provider.fetch,
+  scheduled(controller, _env, ctx) {
+    ctx.waitUntil(maintenance.run(controller));
+  },
+};
+```
+
+Point `main` at that finite entry and install a Cron matching its reviewed end and five-minute removal window. After deploying the prepared Worker, use its public data and bundle:
 
 ```sh
 node http-provider/remote-verify.mjs NEW_HTTP_RECEIPT.json deployment-data.json
@@ -111,4 +161,4 @@ node http-provider/activate.mjs PUBLIC_BUNDLE.json deployment-data.json NEW_ANNO
 node http-provider/discovery-check.mjs deployment-data.json NEW_ROUTING_RECEIPT.json
 ```
 
-Activation invokes the existing official SDK public verifier before any HTTP request, binds the complete dataset, signed advertisement, hostname and provider identity, checks the deployed signed head and objects, and rechecks the serving term before sending the announcement. It accepts the same optional `--go`, `--go-path` and `--go-cache` arguments as the signer. An HTTP acknowledgement establishes admission acceptance; routing readback establishes observed discoverability separately.
+Activation invokes the existing official SDK public verifier before any HTTP request and binds the complete dataset, signed advertisement, hostname and provider identity. Continuous activation first requires deployed `/health` to match the approved root, peer, continuous/null-expiry policy and start, with available content and a configured active head. It then compares the actual signed head and public objects byte-for-byte and rechecks the serving policy before sending the announcement. These HTTP checks do not verify installed Cloudflare triggers; source/data/configuration digests and actual trigger inspection are separate deployment gates. Activation accepts the same optional `--go`, `--go-path` and `--go-cache` arguments as the signer. An HTTP acknowledgement establishes admission acceptance; routing readback establishes observed discoverability separately.

@@ -74,14 +74,17 @@ async function boundedRegular(path, maximum, expectedSize = null) {
 }
 
 export async function buildDataset(path, options) {
-  const { startedAtUtc, termEndUtc } = options;
+  const { startedAtUtc, termEndUtc, servingMode } = options;
   const publication = qualifiedPublication(options);
   const start = Date.parse(startedAtUtc);
   const end = Date.parse(termEndUtc);
-  if (!Number.isFinite(start) || !Number.isFinite(end) ||
-      new Date(start).toISOString() !== startedAtUtc || new Date(end).toISOString() !== termEndUtc ||
-      end <= start || end - start > 7 * 86400000) {
-    throw new Error('A positive finite service term of at most seven days is required.');
+  if (!Number.isFinite(start) || new Date(start).toISOString() !== startedAtUtc ||
+      servingMode !== undefined && !['finite', 'continuous'].includes(servingMode)) {
+    throw new Error('A canonical activation timestamp and valid serving mode are required.');
+  }
+  if (servingMode === 'continuous' ? termEndUtc !== null :
+      !Number.isFinite(end) || new Date(end).toISOString() !== termEndUtc || end <= start || end - start > 7 * 86400000) {
+    throw new Error('Continuous serving requires null expiry; a finite term must be positive and at most seven days.');
   }
   const bytes = await boundedRegular(path, MAX_CAR_BYTES, publication.expected.carBytes);
   if (createHash('sha256').update(bytes).digest('hex') !== publication.carSha256) throw new Error('Qualified CAR digest mismatch.');
@@ -110,6 +113,7 @@ export async function buildDataset(path, options) {
     blocks,
     startedAtUtc,
     termEndUtc,
+    ...(servingMode === undefined ? {} : { servingMode }),
     providerId: null,
     ipni: null,
     attribution: publication.attribution,
@@ -125,13 +129,14 @@ export async function buildDataset(path, options) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  if (![6, 7].includes(process.argv.length)) throw new Error('Usage: dataset-build.mjs ORIGINAL_CAR OUTPUT_JSON START_UTC END_UTC [QUALIFIED_PUBLICATION_JSON]');
+  if (![6, 7].includes(process.argv.length)) throw new Error('Usage: dataset-build.mjs ORIGINAL_CAR OUTPUT_JSON START_UTC END_UTC|continuous [QUALIFIED_PUBLICATION_JSON]');
   let publication = {};
   if (process.argv[6]) {
     publication = JSON.parse((await boundedRegular(process.argv[6], 16384)).toString('utf8'));
     if (!publication || typeof publication !== 'object' || Array.isArray(publication)) throw new Error('Invalid qualification input.');
   }
-  const data = await buildDataset(process.argv[2], { ...publication, startedAtUtc: process.argv[4], termEndUtc: process.argv[5] });
+  const serving = process.argv[5] === 'continuous' ? { servingMode: 'continuous', termEndUtc: null } : { termEndUtc: process.argv[5] };
+  const data = await buildDataset(process.argv[2], { ...publication, startedAtUtc: process.argv[4], ...serving });
   await writeFile(process.argv[3], `${JSON.stringify(data)}\n`, { flag: 'wx', mode: 0o644 });
   console.log(JSON.stringify({ root: data.root, ...data.verification, startedAtUtc: data.startedAtUtc, termEndUtc: data.termEndUtc }));
 }
