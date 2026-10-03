@@ -1,0 +1,22 @@
+{
+  "name": "signalx-network-operator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@ipld/car": "5.4.7",
+    "@ipld/dag-cbor": "10.0.2",
+    "@ipld/dag-pb": "4.2.0",
+    "@libp2p/crypto": "5.1.23",
+    "@libp2p/peer-id": "6.0.15",
+    "ipns": "11.0.1",
+    "multiformats": "14.0.5",
+    "timestamp-nano": "1.0.1"
+  }
+}

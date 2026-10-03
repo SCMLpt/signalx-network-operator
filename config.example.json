@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "operatorId": "signalx-publication",
+  "stateDirectory": "./state-v1",
+  "pin": false,
+  "kuboUrl": "http://127.0.0.1:5001",
+  "gateways": [
+    "https://trustless-gateway.link/"
+  ],
+  "ipnsRouters": [
+    "https://delegated-ipfs.dev/"
+  ],
+  "publications": [
+    {
+      "id": "signalx-ipns",
+      "ipnsName": "k51qzi5uqu5dhrgbb3tfnfg0hgu7ju0h30onynyiffss8iwtkxbqipwxye41qw"
+    }
+  ],
+  "limits": {
+    "maxCarBytes": 8388608,
+    "maxRunBytes": 16777216,
+    "maxBlocks": 4096,
+    "maxLinks": 16384,
+    "timeoutMs": 15000,
+    "runTimeoutMs": 60000,
+    "maxRepoBytes": 2147483648
+  },
+  "intervalSeconds": 300
+}
