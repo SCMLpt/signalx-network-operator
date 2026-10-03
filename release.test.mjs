@@ -16,8 +16,11 @@ async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'signalx-release-test-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const directory = join(root, 'source');
-  await mkdir(join(directory, 'deploy'), { recursive: true });
-  for (const path of RELEASE_FILES) await copyFile(join(source, path), join(directory, path));
+  for (const path of RELEASE_FILES) {
+    const destination = join(directory, path);
+    await mkdir(dirname(destination), { recursive: true });
+    await copyFile(join(source, path), destination);
+  }
   return { root, directory };
 }
 
@@ -51,10 +54,21 @@ async function extractFixture(directory, release) {
   }
 }
 
+test('npm test explicitly covers every packaged Node test with one concurrent test process', async () => {
+  const pkg = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'));
+  const command = pkg.scripts.test.split(' ');
+  assert.deepEqual(command.slice(0, 3), ['node', '--test', '--test-concurrency=1']);
+  assert.deepEqual(command.slice(3).sort(), RELEASE_FILES.filter(path => path.endsWith('.test.mjs')).sort());
+});
+
 test('offline source bundle is deterministic, locked and excludes private/workspace files', async t => {
   const { directory } = await fixture(t);
   const secret = ['release-test-private-key-canary', Date.now(), Math.random()].join('-');
-  for (const path of ['.env', 'operator.json', 'state-v1/records.json', 'fixtures/key.json', 'node_modules/private.js']) {
+  for (const path of ['.env', 'operator.json', 'state-v1/records.json', 'fixtures/key.json', 'node_modules/private.js',
+    'http-provider/wrangler.toml', 'http-provider/provider-key', 'http-provider/.env',
+    'http-provider/.wrangler/state.json', 'http-provider/tmp/raw-receipt.json',
+    'http-provider/cache/private.json', 'http-provider/caches/private.json',
+    'http-provider/node_modules/private.js', 'http-provider/receipts/transfer.json']) {
     await mkdir(dirname(join(directory, path)), { recursive: true });
     await writeFile(join(directory, path), secret);
   }
@@ -260,4 +274,18 @@ test('standard tar extracts the real archive, and built-in-only CLI verifies it 
     { encoding: 'utf8', timeout: 10000 });
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /expected SHA-256/);
+  const alias = join(root, 'unpacked-alias');
+  await symlink(unpack, alias);
+  const linkedCli = join(alias, basename(release.archive, '.tar'), 'release.mjs');
+  for (const expected of [release.sha256, '0'.repeat(64)]) {
+    const linked = spawnSync(process.execPath, ['--preserve-symlinks-main', linkedCli,
+      'verify', release.archive, expected], { encoding: 'utf8', timeout: 10000 });
+    if (expected === release.sha256) {
+      assert.equal(linked.status, 0, linked.stderr);
+      assert.equal(JSON.parse(linked.stdout).sha256, release.sha256);
+    } else {
+      assert.equal(linked.status, 1);
+      assert.match(linked.stderr, /expected SHA-256/);
+    }
+  }
 });
