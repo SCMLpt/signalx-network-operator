@@ -45,12 +45,15 @@ export async function prepareRequest(data) {
     throw new Error('Expected an original complete publication CAR and exact block map');
   }
   const root = CID.parse(data.root).toV1();
-  if (data.providerHost === undefined && root.toString() !== ROOT) throw new Error('New publications must supply an explicit providerHost');
+  const continuous = data.servingMode === 'continuous';
+  if (data.servingMode !== undefined && !['finite', 'continuous'].includes(data.servingMode)) throw new Error('servingMode must be finite or continuous');
+  if (data.providerHost === undefined && (root.toString() !== ROOT || continuous)) throw new Error('New publications must supply an explicit providerHost');
   const providerHost = validateProviderHost(data.providerHost === undefined ? HISTORICAL_PROVIDER_HOST : data.providerHost);
   if (typeof data.providerId !== 'string' || data.providerId.length > 120) throw new Error('Expected a canonical Ed25519 provider identity');
   const provider = peerIdFromString(data.providerId);
   if (provider.toString() !== data.providerId || provider.type !== 'Ed25519') throw new Error('Expected a canonical Ed25519 provider identity');
-  if (typeof data.startedAtUtc !== 'string' || typeof data.termEndUtc !== 'string' || data.startedAtUtc.length > 64 || data.termEndUtc.length > 64) throw new Error('Serving term must contain bounded timestamp strings');
+  if (typeof data.startedAtUtc !== 'string' || data.startedAtUtc.length > 64 ||
+      (continuous ? data.termEndUtc !== null : typeof data.termEndUtc !== 'string' || data.termEndUtc.length > 64)) throw new Error('Serving policy requires a bounded start and finite timestamp or explicit continuous null expiry');
   const archive = decodeBase64(data.carBase64);
   const verified = await verifyCar(archive, data.root, { maxBytes: MAX_CAR_BYTES, maxBlocks: MAX_BLOCKS, maxLinks: 4096 });
   const mappedCids = Object.keys(data.blocks);
@@ -73,12 +76,12 @@ export async function prepareRequest(data) {
   }
   if (observed.size !== mappedCids.length || mappedCids.some(cid => !observed.has(cid)) || !observed.has(root.toString())) throw new Error('Deployment block identity mismatch');
   const start = Date.parse(data.startedAtUtc);
-  const end = Date.parse(data.termEndUtc);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end - start > 7 * 86400000) {
+  const end = continuous ? null : Date.parse(data.termEndUtc);
+  if (!Number.isFinite(start) || (!continuous && (!Number.isFinite(end) || end <= start || end - start > 7 * 86400000))) {
     throw new Error('Serving term must be positive and at most seven days');
   }
   return {
-    request: { rootCid: root.toString(), blockCids: [...observed].sort(), providerId: data.providerId, providerHost, activatedAt: data.startedAtUtc, expiresAt: data.termEndUtc },
+    request: { rootCid: root.toString(), blockCids: [...observed].sort(), providerId: data.providerId, providerHost, activatedAt: data.startedAtUtc, expiresAt: data.termEndUtc, ...(data.servingMode === undefined ? {} : { servingMode: data.servingMode }) },
     integrity: { carSha256: verified.sha256, carBytes: verified.byteLength, reachableBlocks: verified.reachableBlockCount },
   };
 }
@@ -132,18 +135,28 @@ export function handlerIPNI(bundle) {
   const objects = {};
   const removalObjects = {};
   for (const object of bundle.objects) {
-    const target = object.cid === bundle.removalHead.cid ? removalObjects : objects;
+    const target = object.cid === bundle.removalHead?.cid ? removalObjects : objects;
     target[object.cid] = { bodyBase64: object.bodyBase64, contentType: object.contentType };
   }
   return {
     headBase64: bundle.activeHead.bodyBase64, objects,
-    removalHeadBase64: bundle.removalHead.bodyBase64, removalObjects,
+    removalHeadBase64: bundle.removalHead?.bodyBase64 ?? null, removalObjects,
   };
 }
 
 export async function buildBundle(data, keyPath, options = {}) {
   const { request, integrity } = await prepareRequest(data);
-  const bundle = await referenceRun(request, { ...options, keyPath, verify: false });
+  let input = request;
+  if (options.previousBundle !== undefined) {
+    if (request.servingMode !== 'continuous' || !options.previousBundle || typeof options.previousBundle !== 'object') throw new Error('Previous public bundle migration requires continuous serving');
+    await verifyPublicBundle(options.previousBundle, { ...options, keyPath: undefined });
+    const prior = options.previousBundle.request;
+    const host = prior.providerHost === undefined ? HISTORICAL_PROVIDER_HOST : prior.providerHost;
+    if (prior.rootCid !== request.rootCid || prior.providerId !== request.providerId || host !== request.providerHost ||
+        !isDeepStrictEqual([...prior.blockCids].sort(), request.blockCids)) throw new Error('Previous public bundle differs from the exact publication, provider or host');
+    input = { request, previousBundle: options.previousBundle };
+  }
+  const bundle = await referenceRun(input, { ...options, keyPath, verify: false });
   if (!isDeepStrictEqual(bundle.request, request)) throw new Error('Signed bundle differs from the verified publication request');
   await referenceRun(bundle, { ...options, keyPath: undefined, verify: true });
   return { ...bundle, sourceIntegrity: integrity, ipni: handlerIPNI(bundle) };
@@ -151,6 +164,8 @@ export async function buildBundle(data, keyPath, options = {}) {
 
 export async function verifyPublicBundle(bundle, options = {}) {
   validateProviderHost(bundle?.request?.providerHost === undefined ? HISTORICAL_PROVIDER_HOST : bundle.request.providerHost);
+  if (bundle?.request?.servingMode === 'continuous' &&
+      (bundle.request.expiresAt !== null || bundle.removalHead !== null || bundle.removalAnnouncement !== null)) throw new Error('Continuous public bundle requires null expiry and removal fields');
   const result = await referenceRun(bundle, { ...options, verify: true });
   if (!isDeepStrictEqual(bundle.ipni, handlerIPNI(bundle))) throw new Error('HTTP handler mapping differs from signed public objects');
   return { ...result, handlerMappingVerified: true };
@@ -159,12 +174,12 @@ export async function verifyPublicBundle(bundle, options = {}) {
 async function main(args) {
   const options = {};
   for (let i = 0; i < args.length; i += 2) {
-    if (!['--data', '--key', '--output', '--verify', '--go', '--go-path', '--go-cache'].includes(args[i]) || !args[i + 1] || Object.hasOwn(options, args[i])) throw new Error('Use --data DATA.json --key PRIVATE.pb --output PUBLIC.json, or --verify PUBLIC.json; optional --go EXECUTABLE --go-path GOPATH --go-cache GOCACHE');
+    if (!['--data', '--key', '--output', '--verify', '--previous-bundle', '--go', '--go-path', '--go-cache'].includes(args[i]) || !args[i + 1] || Object.hasOwn(options, args[i])) throw new Error('Use --data DATA.json --key PRIVATE.pb --output PUBLIC.json, optionally --previous-bundle PUBLIC.json; or --verify PUBLIC.json; optional --go EXECUTABLE --go-path GOPATH --go-cache GOCACHE');
     options[args[i]] = args[i + 1];
   }
   const runtime = { ...(options['--go'] ? { goBinary: options['--go'] } : {}), ...(options['--go-path'] ? { goPath: options['--go-path'] } : {}), ...(options['--go-cache'] ? { goCache: options['--go-cache'] } : {}) };
   if (options['--verify']) {
-    if (options['--data'] || options['--key'] || options['--output']) throw new Error('Public verification takes --verify and optional Go runtime paths only');
+    if (options['--data'] || options['--key'] || options['--output'] || options['--previous-bundle']) throw new Error('Public verification takes --verify and optional Go runtime paths only');
     const raw = await readFile(options['--verify']);
     if (raw.length > 131072) throw new Error('Public bundle exceeds bound');
     const result = await verifyPublicBundle(JSON.parse(raw), runtime);
@@ -172,11 +187,16 @@ async function main(args) {
     return;
   }
   if (!options['--data'] || !options['--key'] || !options['--output']) throw new Error('Missing build input or output');
+  if (options['--previous-bundle']) {
+    const previous = await readFile(options['--previous-bundle']);
+    if (previous.length > 131072) throw new Error('Previous public bundle exceeds bound');
+    runtime.previousBundle = JSON.parse(previous);
+  }
   const raw = await readFile(options['--data']);
   if (raw.length > 3145728) throw new Error('Deployment input exceeds bound');
   const bundle = await buildBundle(JSON.parse(raw), options['--key'], runtime);
   await writeFile(options['--output'], `${JSON.stringify(bundle, null, 2)}\n`, { flag: 'wx', mode: 0o644 });
-  console.log(JSON.stringify({ publicBundleWritten: true, providerId: bundle.providerId, providerHost: bundle.request.providerHost, entries: bundle.request.blockCids.length, addCid: bundle.activeHead.cid, removalCid: bundle.removalHead.cid }));
+  console.log(JSON.stringify({ publicBundleWritten: true, providerId: bundle.providerId, providerHost: bundle.request.providerHost, entries: bundle.request.blockCids.length, servingMode: bundle.request.servingMode ?? 'finite', expiresAt: bundle.request.expiresAt, addCid: bundle.activeHead.cid, removalCid: bundle.removalHead?.cid ?? null, predecessorCid: bundle.predecessor?.activeHead.cid ?? null, retirementCid: bundle.predecessor?.retirementCid ?? null }));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

@@ -114,3 +114,35 @@ test('worker preserves content fetch and scheduled waitUntil with a tiny public 
   assert.deepEqual(logs, [{ operation: 'ipni_removal_announcement', state: 'skipped', reason: 'invalid_time' }]);
   assert.equal(worker.fetch(new Request('https://provider.example/health')).status, 200);
 });
+
+test('continuous policy suppresses every historical and future expiry callback without reading the clock or fetching', async () => {
+  const data = { ...deploymentData, servingMode: 'continuous', termEndUtc: null,
+    ipni: { ...deploymentData.ipni, objects: { ...deploymentData.ipni.objects, ...deploymentData.ipni.removalObjects },
+      removalHeadBase64: null, removalObjects: {}, removalAnnouncement: null } };
+  const maintenance = createExpiryMaintenance(data, {
+    now: () => assert.fail('Continuous policy evaluated an expiry clock'),
+    fetchFn: () => assert.fail('Continuous policy announced removal'),
+  });
+  for (const time of [deadline - 1, deadline, scheduledTime, deadline + 300_000,
+    deadline + 365 * 86_400_000, NaN, undefined]) {
+    assert.deepEqual(await maintenance.run({ scheduledTime: time }), {
+      operation: 'ipni_removal_announcement', state: 'skipped', reason: 'continuous_serving_policy',
+    });
+  }
+});
+
+test('invalid continuous mixtures cannot configure maintenance and explicit finite retains the existing admitted callback', async () => {
+  const data = { ...deploymentData, servingMode: 'continuous', termEndUtc: null, ipni: null };
+  for (const patch of [
+    { servingMode: 'unknown' }, { servingMode: null }, { servingMode: 'finite' },
+    { termEndUtc: undefined }, { termEndUtc: deploymentData.termEndUtc },
+    { startedAtUtc: undefined }, { startedAtUtc: null }, { startedAtUtc: '2026-02-30T00:00:00Z' },
+    { ipni: deploymentData.ipni },
+  ]) assert.throws(() => createExpiryMaintenance({ ...data, ...patch }));
+  let calls = 0;
+  const maintenance = createExpiryMaintenance({ ...deploymentData, servingMode: 'finite' }, {
+    now: () => scheduledTime, fetchFn: async () => { calls++; return new Response(null, { status: 204 }); },
+  });
+  assert.equal((await maintenance.run({ scheduledTime })).state, 'acknowledged');
+  assert.equal(calls, 1);
+});

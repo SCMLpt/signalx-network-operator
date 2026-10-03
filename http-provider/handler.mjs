@@ -88,25 +88,35 @@ function baseHeaders() {
   });
 }
 
+function utcTime(value, name) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) {
+    throw new TypeError(`${name} must be a UTC timestamp`);
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isSafeInteger(parsed) || new Date(parsed).toISOString().slice(0, 19) !== value.slice(0, 19)) {
+    throw new TypeError(`Invalid ${name}`);
+  }
+  return parsed;
+}
+
 /** Serve trusted, preverified deployment bytes; this module performs no network or filesystem I/O. */
 export function createProvider(data) {
   record(data, 'data');
   if (typeof data.root !== 'string' || !CID.test(data.root)) throw new TypeError('Invalid root');
-  if (typeof data.termEndUtc !== 'string' ||
-      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(data.termEndUtc)) {
-    throw new TypeError('termEndUtc must be a UTC timestamp');
-  }
-  const deadline = Date.parse(data.termEndUtc);
-  if (!Number.isFinite(deadline) || new Date(deadline).toISOString().slice(0, 19) !== data.termEndUtc.slice(0, 19)) {
-    throw new TypeError('Invalid termEndUtc');
-  }
+  const servingMode = data.servingMode === undefined ? 'finite' : data.servingMode;
+  if (!['finite', 'continuous'].includes(servingMode)) throw new TypeError('Invalid servingMode');
+  const continuous = servingMode === 'continuous';
+  if (continuous && data.termEndUtc !== null) throw new TypeError('Continuous serving requires null termEndUtc');
+  const deadline = continuous ? null : utcTime(data.termEndUtc, 'termEndUtc');
+  const start = data.startedAtUtc === undefined && !continuous ? null : utcTime(data.startedAtUtc, 'startedAtUtc');
+  const startedAtUtc = start === null ? null : new Date(start).toISOString();
   if (data.providerId !== null && data.providerId !== undefined &&
       (typeof data.providerId !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{32,120}$/.test(data.providerId))) {
     throw new TypeError('Invalid providerId');
   }
   const root = data.root;
   const providerId = data.providerId ?? null;
-  const termEndUtc = new Date(deadline).toISOString();
+  const termEndUtc = continuous ? null : new Date(deadline).toISOString();
   const attributionText = JSON.stringify(data.attribution ?? null);
   if (attributionText.length > 8_192) throw new TypeError('Attribution exceeds metadata limit');
   const attribution = JSON.parse(attributionText);
@@ -142,6 +152,10 @@ export function createProvider(data) {
   if (data.ipni !== null && data.ipni !== undefined) {
     const ipni = record(data.ipni, 'ipni');
     if (!providerId) throw new TypeError('IPNI requires a supplied providerId');
+    if (continuous && (ipni.removalHeadBase64 != null || ipni.removalAnnouncement != null ||
+        Object.keys(record(ipni.removalObjects ?? {}, 'ipni.removalObjects')).length)) {
+      throw new TypeError('Continuous serving cannot configure expiry removal');
+    }
     activeHead = boundedDecode(ipni.headBase64, 'ipni.headBase64');
     if (ipni.removalHeadBase64 !== null && ipni.removalHeadBase64 !== undefined) {
       removalHead = boundedDecode(ipni.removalHeadBase64, 'ipni.removalHeadBase64');
@@ -165,7 +179,9 @@ export function createProvider(data) {
   return {
     fetch(request) {
       const now = Date.now();
-      const active = Number.isFinite(now) && now < deadline;
+      const clockValid = Number.isSafeInteger(now) && Number.isFinite(new Date(now).getTime());
+      const active = continuous ? clockValid && now >= start : Number.isFinite(now) && now < deadline;
+      const expired = !continuous && Number.isFinite(now) && now >= deadline;
       const method = request.method;
       function response(bytes, status, contentType, { etag = null, cache = 'no-store', ipfsPath = null, ipfsRoots = null } = {}) {
         const headers = baseHeaders();
@@ -247,17 +263,17 @@ export function createProvider(data) {
         } else return error(400, 'Unsupported format');
         if (!active) return error(410, 'Content serving term has ended');
         etag ??= `"${cid}"`;
-        const ttl = Math.max(0, Math.min(3_600, Math.floor((deadline - now) / 1_000)));
+        const ttl = continuous ? 3_600 : Math.max(0, Math.min(3_600, Math.floor((deadline - now) / 1_000)));
         cache = `public, max-age=${ttl}, s-maxage=${ttl}, immutable, must-revalidate`;
         ipfsPath = `/ipfs/${cid}${segments.length ? '/' + segments.join('/') : ''}`;
       } else if (ad) {
         if ([...query].length) return error(400, 'IPNI queries are unsupported');
         if (ad[1] === 'head') {
-          bytes = active ? activeHead : removalHead;
-          if (!bytes) return error(404, active ? 'No IPNI head is configured' : 'No removal head is configured');
+          bytes = active ? activeHead : expired ? removalHead : null;
+          if (!bytes) return error(404, expired ? 'No removal head is configured' : 'No active IPNI head is configured');
           type = 'application/vnd.ipld.dag-json';
         } else {
-          const object = objects.get(ad[1]) ?? (!active ? removalObjects.get(ad[1]) : null);
+          const object = objects.get(ad[1]) ?? (expired ? removalObjects.get(ad[1]) : null);
           if (!object) return error(404, 'IPNI object is not available');
           ({ bytes, contentType: type } = object);
           etag = `"${ad[1]}"`;
@@ -265,8 +281,8 @@ export function createProvider(data) {
       } else if (url.pathname === '/health') {
         if ([...query].length) return error(400, 'Health queries are unsupported');
         bytes = encoder.encode(JSON.stringify({ service: 'immutable-http-content-provider', transport: 'https',
-          nativeBitswap: false, root, providerId, termEndUtc, contentAvailable: active, attribution,
-          ipni: { configured: activeHead !== null, head: active ? activeHead ? 'active' : 'absent' : removalHead ? 'removal' : 'absent' } }));
+          nativeBitswap: false, root, providerId, servingMode, startedAtUtc, termEndUtc, contentAvailable: active, attribution,
+          ipni: { configured: activeHead !== null, head: active ? activeHead ? 'active' : 'absent' : expired && removalHead ? 'removal' : 'absent' } }));
         type = 'application/json; charset=utf-8';
       } else return error(404, 'Not found');
 

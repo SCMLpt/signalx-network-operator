@@ -123,6 +123,32 @@ test('changed block bytes and an extended serving term cannot reach the signer',
   await assert.rejects(prepareRequest(extended), /seven days/);
 });
 
+test('continuous serving requires explicit mode, null expiry and the verified unchanged publication', async () => {
+  const data = await graphFixture(25);
+  const finite = await prepareRequest(data);
+  assert.equal(Object.hasOwn(finite.request, 'servingMode'), false);
+  const explicitFinite = await prepareRequest({ ...data, servingMode: 'finite' });
+  assert.equal(explicitFinite.request.servingMode, 'finite');
+  const continuous = await prepareRequest({ ...data, servingMode: 'continuous', termEndUtc: null });
+  assert.equal(continuous.request.servingMode, 'continuous');
+  assert.equal(continuous.request.expiresAt, null);
+  assert.deepEqual(continuous.request.blockCids, finite.request.blockCids);
+  assert.deepEqual(continuous.integrity, finite.integrity);
+  for (const changed of [{ termEndUtc: null }, { servingMode: 'continuous' }, { servingMode: 'continuous', termEndUtc: undefined }, { servingMode: 'unknown', termEndUtc: null }]) {
+    await assert.rejects(prepareRequest({ ...data, ...changed }), /policy|servingMode/);
+  }
+});
+
+test('continuous mapping serves old bridge history and has no expiry removal slots', () => {
+  const bundle = { activeHead: { cid: 'new-add', bodyBase64: 'current' }, removalHead: null,
+    objects: ['old-entry', 'old-add', 'old-remove', 'new-add'].map(cid => ({ cid, bodyBase64: cid, contentType: 'application/vnd.ipld.dag-cbor' })) };
+  const mapped = handlerIPNI(bundle);
+  assert.deepEqual(Object.keys(mapped.objects), ['old-entry', 'old-add', 'old-remove', 'new-add']);
+  assert.deepEqual(mapped.removalObjects, {});
+  assert.equal(mapped.removalHeadBase64, null);
+  assert.equal(mapped.headBase64, 'current');
+});
+
 test('handler mapping withholds the removal object until the end phase', () => {
   const bundle = {
     activeHead: { cid: 'add', bodyBase64: 'active' },

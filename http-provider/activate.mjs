@@ -33,6 +33,7 @@ export async function boundedRequest(url, options = {}, limit = 262144, { fetchI
         chunks.push(value);
       }
     } catch (error) { await reader.cancel().catch(() => {}); throw error; }
+    finally { reader.releaseLock(); }
   }
   return { status: response.status, contentType: response.headers.get('content-type'), bytes: Buffer.concat(chunks, size) };
 }
@@ -78,18 +79,29 @@ export async function announce(bundle, data, { fetchImpl = globalThis.fetch, now
   const sdk = await verifyBundle(bundle, { goBinary, goPath, goCache });
   if (sdk?.verified !== true || sdk.handlerMappingVerified !== true || sdk.providerId !== details.providerId ||
       sdk.providerHost !== details.providerHost || sdk.entryCount !== details.blockCount || sdk.addCid !== bundle.activeHead.cid ||
-      sdk.removalCid !== bundle.removalHead?.cid) throw new Error('Public SDK verification differs from approved publication');
+      sdk.removalCid !== (bundle.removalHead?.cid ?? null)) throw new Error('Public SDK verification differs from approved publication');
   const start = Date.parse(data.startedAtUtc); const end = Date.parse(data.termEndUtc);
   function termCheck() {
     const clock = now();
-    if (!Number.isSafeInteger(clock) || clock < start || clock >= end) throw new Error('Outside original serving term');
+    if (!Number.isSafeInteger(clock) || clock < start || data.servingMode !== 'continuous' && clock >= end) throw new Error('Outside approved serving policy');
   }
   termCheck();
   const { base } = details;
   const bounded = (url, options, limit) => boundedRequest(url, options, limit, { fetchImpl });
+  if (data.servingMode === 'continuous') {
+    const health = await bounded(`${base}/health`, {}, 16384);
+    let policy;
+    try { policy = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(health.bytes)); }
+    catch { throw new Error('Deployed continuous serving policy is unavailable'); }
+    if (health.status !== 200 || policy?.root !== details.root || policy.providerId !== details.providerId ||
+        policy.servingMode !== 'continuous' || policy.termEndUtc !== null || policy.startedAtUtc !== data.startedAtUtc ||
+        policy.contentAvailable !== true || policy.ipni?.configured !== true || policy.ipni.head !== 'active') {
+      throw new Error('Deployed continuous serving policy differs from approved publication');
+    }
+  }
   const head = await bounded(`${base}/ipni/v1/ad/head`, {}, 16384);
   if (head.status !== 200 || !head.bytes.equals(Buffer.from(bundle.activeHead.bodyBase64, 'base64'))) throw new Error('Deployed signed head mismatch');
-  for (const object of bundle.objects.filter(object => object.cid !== bundle.removalHead.cid)) {
+  for (const object of bundle.objects.filter(object => object.cid !== bundle.removalHead?.cid)) {
     const fetched = await bounded(`${base}/ipni/v1/ad/${object.cid}`, {}, 65536);
     if (fetched.status !== 200 || !fetched.bytes.equals(Buffer.from(object.bodyBase64, 'base64'))) throw new Error('Deployed signed object mismatch');
   }
@@ -103,6 +115,7 @@ export async function announce(bundle, data, { fetchImpl = globalThis.fetch, now
     providerId: data.providerId, providerHost: details.providerHost, boundAddress: details.address,
     root: data.root, addCid: bundle.activeHead.cid,
     deployedSignedObjectsVerified: true, status: result.status,
+    deployedContinuousServingPolicyVerified: data.servingMode === 'continuous',
     publicBundleSdkVerification: sdk,
     response: result.bytes.toString('utf8'),
     admissionAccepted: result.status >= 200 && result.status < 300,
