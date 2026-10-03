@@ -1,0 +1,15 @@
+# Explicitly invalid/unapproved template: no scheduled deadline is supplied.
+# Render an approved manifest; never install this template as an active timer.
+[Unit]
+Description=Absolute stop for reviewed SignalX finite pilot
+After=time-sync.target
+
+[Timer]
+OnCalendar=
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=true
+Unit=signalx-pilot-stop.service
+
+[Install]
+WantedBy=timers.target

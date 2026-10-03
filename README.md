@@ -26,6 +26,12 @@ Continuous `node cli.mjs run CONFIG.json` requires reviewed `pin:true`, fixed CI
 
 Kubo 0.43.1 is the reviewed RPC compatibility baseline. Its [release notes](https://github.com/ipfs/kubo/releases/tag/v0.43.1) state that the v0.43 line is Shipyard's last Kubo release and its IPFS work ended on September 30, 2026. A public operator needs an accountable patch and incident owner and a reviewed continuation or replacement path. This announcement does not establish that the IPFS network ended or that all future Kubo maintenance has stopped.
 
+## Finite pilot and evidence tools
+
+Source version 0.1.1 includes `deploy/pilot-fence.mjs`, which renders and checks systemd admission rules for an approved fixed-CID pilot lasting at most seven days. Admission requires the exact reviewed manifest/configurations, installed timer and drop-ins, Node.js **22.23.3** and Kubo **0.43.1**. A host administrator installs the generated files and records actual shutdown timing; retained data, provider records and billing need the owner's end decision. The bundled manifest/timer examples remain unapproved.
+
+`node live-evidence.mjs plan` prints a bounded acquisition plan without network requests. `verify` reads private capture files offline and reports their consistency pending capture-provenance review. Controlled retrieval, organic use, public DHT duty, provider renewal and improvement over plain Kubo still require their respective observations. Follow the [finite pilot guide](deploy/PILOT_QUICKSTART.md) for exact paths, approvals and evidence boundaries. The published v0.1.0 archive predates these tools.
+
 ## Configuration
 
 Copy [`config.example.json`](config.example.json) and review its sources, publications, and limits. Its `pin:false` does not persist content or advertise it as provided. Approve each CID, retention period, and capacity before changing to `pin:true`.
@@ -58,7 +64,7 @@ Build from a trusted, quiescent source tree with Node 22 or later:
 
 ```sh
 node release.mjs build OUTPUT_DIRECTORY
-node release.mjs verify OUTPUT_DIRECTORY/signalx-network-operator-0.1.0.tar EXPECTED_SHA256
+node release.mjs verify OUTPUT_DIRECTORY/signalx-network-operator-0.1.1.tar EXPECTED_SHA256
 ```
 
-The archive includes an exact file allowlist, locked dependency metadata, the runtime and all nine self-contained maintainer test modules. It excludes local journals, private configuration and installed dependencies. Its canonical manifest records file sizes and SHA-256 values. After verification, extract it into a fresh directory, run `node release.mjs verify .`, then install the locked dependencies with `npm ci` and run `npm test`. A successful archive check establishes byte consistency, not author identity, public service or external adoption. Obtain the expected digest from an authenticated publisher. `licenseFile:null` means the archive has no public reuse license; public licensing and publication are separate release gates.
+The archive includes an exact file allowlist, locked dependency metadata, the runtime, pilot/evidence tools and examples, and all eleven self-contained maintainer test modules, including the test under `deploy/`. It excludes local journals, actual host manifests/configurations, raw evidence, credentials and installed dependencies. Its canonical manifest records file sizes and SHA-256 values; the existing MIT `LICENSE` is included when present. After authenticating the archive's expected digest, verify and extract it into a fresh directory, run `node release.mjs verify .`, then install the locked dependencies with `npm ci` and run `npm test`. A successful archive check establishes byte consistency, not author identity, public service or external adoption. `licenseFile:null` records an absent license. Verify historical releases with their matching archived verifier; v0.1.0 has a different file allowlist. Obtain publication status and the authenticated digest from the [versioned GitHub releases](https://github.com/SCMLpt/signalx-network-operator/releases).

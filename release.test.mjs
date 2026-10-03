@@ -5,7 +5,7 @@ import { chmod, copyFile, link, mkdir, mkdtemp, readFile, rename, rm,
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRelease, RELEASE_FILES, verifyReleaseArchive,
   verifyReleaseDirectory, writeRelease } from './release.mjs';
@@ -225,7 +225,7 @@ test('output is exclusive, rejects symlinks and preserves existing artifacts on 
   await rm(first.archive);
   await assert.rejects(writeRelease(output, { sourceDirectory: directory }), { code: 'EEXIST' });
   await assert.rejects(stat(first.archive), { code: 'ENOENT' });
-  assert.equal(await readFile(first.checksum, 'utf8'), `${first.sha256}  signalx-network-operator-0.1.0.tar\n`);
+  assert.equal(await readFile(first.checksum, 'utf8'), `${first.sha256}  ${basename(first.archive)}\n`);
   const alias = join(root, 'output-alias');
   await symlink(output, alias);
   await assert.rejects(writeRelease(alias, { sourceDirectory: directory }), /real directory/);
@@ -243,7 +243,7 @@ test('standard tar extracts the real archive, and built-in-only CLI verifies it 
   await mkdir(unpack);
   const tar = spawnSync('tar', ['-xf', release.archive, '-C', unpack], { encoding: 'utf8', timeout: 10000 });
   assert.equal(tar.status, 0, tar.stderr);
-  const extracted = join(unpack, 'signalx-network-operator-0.1.0');
+  const extracted = join(unpack, basename(release.archive, '.tar'));
   const verified = await verifyReleaseDirectory(extracted);
   assert.equal(verified.sha256, release.sha256);
   for (const args of [[release.archive, release.sha256], [extracted]]) {

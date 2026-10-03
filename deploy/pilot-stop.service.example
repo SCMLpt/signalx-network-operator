@@ -1,0 +1,14 @@
+# Uninstalled example only. Render the exact approved manifest to obtain the
+# authoritative bytes; admission rejects differing installed artifacts.
+[Unit]
+Description=Stop both SignalX pilot services and preserve repository
+
+[Service]
+Type=oneshot
+User=root
+StateDirectory=signalx-pilot-control
+StateDirectoryMode=0755
+UMask=0022
+ExecStart=/usr/bin/systemctl --no-block stop kubo.service operator.service
+ExecStart=-/opt/node-v22/bin/node /opt/signalx/network-operator/deploy/pilot-fence.mjs expire /etc/signalx-network/pilot-manifest.json
+TimeoutStartSec=10s
